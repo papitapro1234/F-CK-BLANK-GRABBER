@@ -12,7 +12,12 @@ a donde envia los datos el atacante, la razon de no conseguir el codigo fuente d
 es porque lo intente y no pude conseguir el codigo fuente del archivo final, y tambien
 porque no es necesario porque el codigo del stealer es publico, por ende tanto ustedes
 como yo, podemos verlo y saber que hace el malware realmente, lo que unicamente cambia
-es el token, y por eso unicamente enfoque el script para conseguir el token. 
+es el token, y por eso unicamente enfoque el script para conseguir el token.
+
+--Actualizacion
+Actualice el script para que ahora en lugar de leer todo el archivo crudo, lo que haga sea
+buscarme los caracteres legibles por humanos de ese archivo crudo, lo cual hace que sea mas
+facil identificar el token o webhook.
 """
 
 import re
@@ -24,6 +29,7 @@ import glob
 import lzma
 import codecs
 import sys
+from pathlib import Path
 from colorama import Fore,init
 from Crypto.Cipher import AES
 from pyinstxtractor import generate_pyc_files
@@ -31,7 +37,16 @@ from pyinstxtractor import generate_pyc_files
 def decrypt_content(key, iv , content):
     cipher = AES.new(key, AES.MODE_GCM, nonce=iv) #desencriptado GCM
     return cipher.decrypt(content) 
+
 ##########################################
+def extract_legible_string(file_path:str, min_lenght=4):
+    with open(file_path, "rb") as f:
+        contenido = f.read()
+    # Busca secuencias de caracteres ASCII imprimibles
+    patron = bytes(r"[\x20-\x7E]{" + str(min_lenght) + r",}", "utf-8") #Esto simplemente busca un rango de caracteres
+    coincidencias = re.findall(patron, contenido)
+    return [c.decode("utf-8") for c in coincidencias]
+#####################################################
 def fase3_malware_source_code(path:str):
     final_list = []
     try:
@@ -51,10 +66,11 @@ def fase3_malware_source_code(path:str):
         output_file = sys.argv[2] 
         with open(output_file, "wb") as f:
             f.write(bytecode)
-        with open(output_file , "rb") as t:
-            content_binary_file = str(t.read())
-            token_webhook = re.search(r'[Ss]ettingszP([\w]+)==?' , content_binary_file) #Con este regex conseguimos el token
-            print(Fore.GREEN + f"[+] Token o Webhook encontrado: {base64.b64decode(token_webhook.group().replace("SettingszP" , ''))}" + Fore.RESET)
+        final_content = extract_legible_string(output_file)
+        for i in final_content:
+            token_webhook = re.search(r'[\w]+==z' , i) #Con este regex conseguimos el token
+            if token_webhook:
+                print(Fore.GREEN + f"[+] Token o Webhook encontrado: {base64.b64decode(token_webhook.group()[:-1].replace("SettingszP" , ""))}" + Fore.RESET)
         print(Fore.GREEN + "[+] Fase 3 completada" + Fore.RESET)
         print(Fore.GREEN + f"[+] Bytecode guardado en {output_file}" + Fore.RESET)
     except Exception as err:
@@ -98,14 +114,14 @@ def fase2_extract_and_unxz(path:str):
 def fase1_extract_and_unzip(generate_folder:str):
     # La variable de abajo lo que haran sera buscar todos los archivos pyc
     # para luego filtrar por el que nos interesa.
-    folder_pyc = glob.glob(f"{generate_folder}/*.pyc")
+    init_path = Path(generate_folder)
+    folder_pyc = list(init_path.rglob("*.pyc"))
     pyc_file = ""
-
     for i in folder_pyc:
         # Esto lo que hace es buscar el archivo main que es el que contiene
         # el archivo .zip encriptado.
         # El porque de ese nombre todo raro lo explico en mi articulo :D
-        r = re.match(r'(\w{8})-(\w{4})-(\w{4})-(\w{4})-(\w{12})\.pyc' , str(i.replace(generate_folder + "\\" , "")))
+        r = re.match(r'(\w{8})-(\w{4})-(\w{4})-(\w{4})-(\w{12})\.pyc' , str(str(i).replace(generate_folder + "\\" , "")))
         if r:
             pyc_file = i
     try:
@@ -127,7 +143,7 @@ def fase1_extract_and_unzip(generate_folder:str):
 
             print(Fore.GREEN + f"[+] Llave: {key}\n[+] IV: {iv}" + Fore.RESET)
         # Leemos el archivo 'blank.aes' que contiene el archivo .zip encriptado
-        with open('blank.aes' , "rb") as blank:
+        with open(f"{generate_folder}\\blank.aes" , "rb") as blank:
             ciphertext = blank.read()
         # Volteamos el contenido del archivo previamente leido y luego lo descomprimimos
         ciphertext = zlib.decompress(ciphertext[::(-1)])
@@ -149,5 +165,6 @@ if len(sys.argv) < 3:
     os._exit(1)
 generate_pyc_files(sys.argv[1])
 print("")
+os.chdir("..")
 generate_folder = sys.argv[1] + "_extracted"
 fase1_extract_and_unzip(generate_folder)
